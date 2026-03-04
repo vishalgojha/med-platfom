@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { appClient } from "@/api/appClient";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { executeAgentWorkflow, getIndiaAgentDeploymentProfile } from "@/api/agentRouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Users, UserCheck, Clock, Activity, Droplet, Heart, TrendingUp, MessageCircle, FileText, Loader2, CheckCircle, AlertTriangle, UserPlus, Mail } from "lucide-react";
+import { Users, UserCheck, Clock, Activity, Droplet, Heart, TrendingUp, MessageCircle, FileText, Loader2, CheckCircle, AlertTriangle, UserPlus, Mail, Network, Workflow } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +22,7 @@ export default function DoctorDashboard() {
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [inviteForm, setInviteForm] = useState({ patient_email: "", patient_name: "", message: "" });
   const [inviteSuccess, setInviteSuccess] = useState(false);
+  const [routingConnectionId, setRoutingConnectionId] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -61,6 +63,49 @@ export default function DoctorDashboard() {
   const pendingConnections = connections.filter(c => c.status === "pending");
   const activeConnections = connections.filter(c => c.status === "active");
 
+  const { data: deploymentProfile } = useQuery({
+    queryKey: ["gluco-vital-agent-profile", "en", "hi"],
+    queryFn: () => getIndiaAgentDeploymentProfile(["en", "hi"]),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const routeMutation = useMutation({
+    mutationFn: async ({
+      connection,
+      context,
+      severity,
+    }: {
+      connection: any;
+      context: string;
+      severity: "urgent" | "routine";
+    }) => {
+      const doctorId = typeof user?.id === "string" ? user.id : "d_api";
+      const specialtyId = severity === "urgent" ? "endocrinology" : "family_medicine";
+
+      return executeAgentWorkflow({
+        workflow: "triage_intake",
+        specialtyId,
+        doctorId,
+        payload: {
+          query: context,
+          patientEmail: connection.patient_email,
+          patientName: connection.patient_name,
+        },
+        dryRun: false,
+        confirm: true,
+      });
+    },
+    onSuccess: (response, variables) => {
+      toast.success(`Routed ${variables.connection.patient_name || "patient"} via ${response.leadAgent}`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Unable to route this patient case");
+    },
+    onSettled: () => {
+      setRoutingConnectionId(null);
+    },
+  });
+
   const acceptMutation = useMutation({
     mutationFn: (id) => appClient.entities.DoctorConnection.update(id, { 
       status: "active",
@@ -79,6 +124,11 @@ export default function DoctorDashboard() {
       toast.success("Connection declined");
     }
   });
+
+  const handleRoutePatientCase = (payload: { connection: any; context: string; severity: "urgent" | "routine" }) => {
+    setRoutingConnectionId(payload.connection.id);
+    routeMutation.mutate(payload);
+  };
 
   if (!user) {
     return (
@@ -131,6 +181,29 @@ export default function DoctorDashboard() {
             </CardContent>
           </Card>
         </div>
+
+        <Card className="mb-6 border-emerald-200 bg-emerald-50/30">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Network className="w-4 h-4 text-emerald-700" />
+              <p className="font-semibold text-emerald-900 text-sm">India Multi-Agent Deployment</p>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-emerald-200 bg-white p-2">
+                <p className="text-[11px] text-slate-500">Languages</p>
+                <p className="text-sm font-semibold text-slate-900">{deploymentProfile?.primaryLanguages?.join(", ") || "--"}</p>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-white p-2">
+                <p className="text-[11px] text-slate-500">Roles</p>
+                <p className="text-sm font-semibold text-slate-900">{deploymentProfile?.roles?.length ?? 0}</p>
+              </div>
+              <div className="rounded-lg border border-emerald-200 bg-white p-2">
+                <p className="text-[11px] text-slate-500">Routes</p>
+                <p className="text-sm font-semibold text-slate-900">{deploymentProfile?.routes?.length ?? 0}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Pending Requests */}
         {pendingConnections.length > 0 && (
@@ -209,7 +282,12 @@ export default function DoctorDashboard() {
           ) : (
             <div className="grid md:grid-cols-2 gap-4">
               {activeConnections.map(conn => (
-                <PatientCard key={conn.id} connection={conn} />
+                <PatientCard
+                  key={conn.id}
+                  connection={conn}
+                  onRouteCase={handleRoutePatientCase}
+                  routingInProgress={routeMutation.isPending && routingConnectionId === conn.id}
+                />
               ))}
             </div>
           )}
@@ -314,7 +392,15 @@ export default function DoctorDashboard() {
   );
 }
 
-function PatientCard({ connection }) {
+function PatientCard({
+  connection,
+  onRouteCase,
+  routingInProgress = false,
+}: {
+  connection: any;
+  onRouteCase: (payload: { connection: any; context: string; severity: "urgent" | "routine" }) => void;
+  routingInProgress?: boolean;
+}) {
   const { data: logs = [] } = useQuery({
     queryKey: ['patient-logs', connection.patient_email],
     queryFn: () => appClient.entities.HealthLog.filter(
@@ -345,6 +431,18 @@ function PatientCard({ connection }) {
   // Check for concerning values
   const hasHighSugar = lastSugar && lastSugar > 180;
   const hasLowSugar = lastSugar && lastSugar < 70;
+  const routeSeverity: "urgent" | "routine" = hasHighSugar || hasLowSugar ? "urgent" : "routine";
+  const routeContext = [
+    `Patient: ${connection.patient_name || "Unknown"}`,
+    `Latest sugar: ${lastSugar ?? "N/A"}`,
+    `7-day sugar average: ${avgSugar ?? "N/A"}`,
+    `Latest blood pressure: ${lastBP ?? "N/A"}`,
+    hasHighSugar ? "Flag: hyperglycemia risk" : "",
+    hasLowSugar ? "Flag: hypoglycemia risk" : "",
+    logs[0]?.notes ? `Recent note: ${logs[0].notes}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   return (
     <Card className={`hover:shadow-md transition-shadow ${hasHighSugar || hasLowSugar ? 'border-red-200' : ''}`}>
@@ -417,6 +515,25 @@ function PatientCard({ connection }) {
               <span className="hidden sm:inline">Feedback</span>
             </Button>
           </Link>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+            onClick={() => onRouteCase({ connection, context: routeContext, severity: routeSeverity })}
+            disabled={routingInProgress}
+          >
+            {routingInProgress ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin sm:mr-1" />
+                <span className="hidden sm:inline">Routing</span>
+              </>
+            ) : (
+              <>
+                <Workflow className="w-4 h-4 sm:mr-1" />
+                <span className="hidden sm:inline">AI Route</span>
+              </>
+            )}
+          </Button>
         </div>
       </CardContent>
     </Card>
