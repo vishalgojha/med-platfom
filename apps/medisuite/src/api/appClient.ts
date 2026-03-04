@@ -15,6 +15,63 @@ const hasPlaceholderSupabaseConfig =
 
 const AUTH_ENABLED = AUTH_REQUIRED && !hasPlaceholderSupabaseConfig;
 const GUEST_USER = { id: 'guest', email: 'guest@local', role: 'guest' };
+const DEFAULT_WHATSAPP_NUMBER = ((import.meta.env.VITE_APP_WHATSAPP_NUMBER as string | undefined) ?? '919819471310').trim();
+const RAW_AGENT_WHATSAPP_NUMBERS = ((import.meta.env.VITE_APP_WHATSAPP_AGENT_NUMBERS as string | undefined) ?? '').trim();
+
+const normalizePhone = (value: string): string => value.replace(/\D/g, '');
+
+const parseAgentWhatsappNumbers = (): Record<string, string> => {
+  if (!RAW_AGENT_WHATSAPP_NUMBERS) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(RAW_AGENT_WHATSAPP_NUMBERS) as Record<string, unknown>;
+    const normalized = Object.entries(parsed).reduce<Record<string, string>>((acc, [key, value]) => {
+      if (typeof value === 'string' && value.trim()) {
+        acc[key] = normalizePhone(value);
+      }
+      return acc;
+    }, {});
+    return normalized;
+  } catch {
+    console.warn('Invalid VITE_APP_WHATSAPP_AGENT_NUMBERS JSON. Expected object map of agentName -> phone number.');
+    return {};
+  }
+};
+
+const AGENT_WHATSAPP_NUMBERS = parseAgentWhatsappNumbers();
+
+const withQueryParam = (url: string, key: string, value: string): string => {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set(key, value);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}${key}=${encodeURIComponent(value)}`;
+  }
+};
+
+const resolveWhatsAppBaseUrl = (agentName: string): string => {
+  const configured = ((import.meta.env.VITE_APP_WHATSAPP_BASE_URL as string | undefined) ?? 'https://wa.me').trim();
+  const sanitizedConfigured = configured.replace(/\/+$/, '');
+  const fallbackPhone = normalizePhone(DEFAULT_WHATSAPP_NUMBER);
+  const agentPhone = AGENT_WHATSAPP_NUMBERS[agentName] || fallbackPhone;
+
+  if (sanitizedConfigured.includes('{phone}')) {
+    return sanitizedConfigured.replace('{phone}', agentPhone);
+  }
+
+  if (sanitizedConfigured === 'https://wa.me' || sanitizedConfigured === 'http://wa.me') {
+    return agentPhone ? `${sanitizedConfigured}/${agentPhone}` : sanitizedConfigured;
+  }
+
+  if (sanitizedConfigured.includes('api.whatsapp.com/send')) {
+    return withQueryParam(sanitizedConfigured, 'phone', agentPhone);
+  }
+
+  return sanitizedConfigured;
+};
 
 const toSnakeCase = (value: string): string => value.replace(/([A-Z])/g, '_$1').toLowerCase();
 
@@ -261,9 +318,8 @@ const appFunctions = {
 
 const appAgents = {
   getWhatsAppConnectURL: (agentName: string): string => {
-    const baseUrl = (import.meta.env.VITE_APP_WHATSAPP_BASE_URL as string | undefined) ?? 'https://wa.me';
-    const text = encodeURIComponent(`Connect me with ${agentName}`);
-    return `${baseUrl}/?text=${text}`;
+    const baseUrl = resolveWhatsAppBaseUrl(agentName);
+    return withQueryParam(baseUrl, 'text', `Connect me with ${agentName}`);
   },
 
   createConversation: async (payload: Json = {}): Promise<any> => ({

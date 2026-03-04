@@ -38,6 +38,8 @@ For self-hosted pilots without full identity setup:
 
 - keep `VITE_REQUIRE_AUTH=false` in each frontend env file
 - keep `VITE_ENABLE_VISUAL_EDIT_AGENT=false` to disable editor scaffolding
+- set `VITE_APP_WHATSAPP_NUMBER` to your business WhatsApp number (E.164 digits only)
+- optional: set `VITE_APP_WHATSAPP_AGENT_NUMBERS` JSON for per-agent numbers
 
 ## 2) Launch the stack
 
