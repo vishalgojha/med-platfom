@@ -1,0 +1,46 @@
+services:
+  doctor-agent:
+    build:
+      context: .
+      dockerfile: deploy/docker/doctor-agent.Dockerfile
+    env_file:
+      - deploy/env/doctor-agent.env
+    volumes:
+      - doctor-agent-data:/app/services/doctor-agent/data
+    expose:
+      - "3001"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3001/health/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  clinical-gateway:
+    build:
+      context: .
+      dockerfile: deploy/docker/frontend-gateway.Dockerfile
+      args:
+        MEDISUITE_ENV_FILE: deploy/env/medisuite.env
+        MEDISCRIBE_ENV_FILE: deploy/env/mediscribe.env
+        MEDIPAL_ENV_FILE: deploy/env/medipal.env
+        GLUCOVITAL_ENV_FILE: deploy/env/gluco-vital.env
+    depends_on:
+      doctor-agent:
+        condition: service_healthy
+    ports:
+      - "${MEDISUITE_PORT:-4101}:4101"
+      - "${MEDISCRIBE_PORT:-4102}:4102"
+      - "${MEDIPAL_PORT:-4103}:4103"
+      - "${GLUCOVITAL_PORT:-4104}:4104"
+    restart: unless-stopped
+
+volumes:
+  doctor-agent-data:

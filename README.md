@@ -50,6 +50,36 @@ npm run typecheck
 npm run build
 ```
 
+## Production Deployment (Docker)
+
+The monorepo includes a production deployment pack:
+
+- root `docker-compose.yml`
+- `deploy/docker/doctor-agent.Dockerfile`
+- `deploy/docker/frontend-gateway.Dockerfile`
+- `deploy/nginx/frontend-gateway.conf`
+- per-service env templates under `deploy/env/*.env.example`
+
+Quick start:
+
+```bash
+cp deploy/env/doctor-agent.env.example deploy/env/doctor-agent.env
+cp deploy/env/medisuite.env.example deploy/env/medisuite.env
+cp deploy/env/mediscribe.env.example deploy/env/mediscribe.env
+cp deploy/env/medipal.env.example deploy/env/medipal.env
+cp deploy/env/gluco-vital.env.example deploy/env/gluco-vital.env
+docker compose up -d --build
+```
+
+Frontend ports:
+
+- `4101` -> Medisuite
+- `4102` -> Mediscribe
+- `4103` -> Medipal
+- `4104` -> Gluco Vital
+
+Full deployment runbook: `docs/deployment-production.md`.
+
 ## India-First Specialty Coverage
 
 `packages/clinical-specialties` contains:
