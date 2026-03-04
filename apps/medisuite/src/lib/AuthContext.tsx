@@ -20,6 +20,19 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+const AUTH_REQUIRED = String(import.meta.env.VITE_REQUIRE_AUTH ?? 'false').trim().toLowerCase() === 'true';
+const SUPABASE_URL = ((import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '').trim();
+const SUPABASE_ANON_KEY = ((import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '').trim();
+const LOGIN_URL = ((import.meta.env.VITE_APP_LOGIN_URL as string | undefined) ?? '').trim();
+
+const hasPlaceholderSupabaseConfig =
+  SUPABASE_URL.length === 0 ||
+  SUPABASE_URL.includes('example.supabase.co') ||
+  SUPABASE_ANON_KEY.length === 0 ||
+  SUPABASE_ANON_KEY === 'public-anon-key';
+
+const AUTH_ENABLED = AUTH_REQUIRED && !hasPlaceholderSupabaseConfig;
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<any>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -29,6 +42,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [appPublicSettings] = useState<Record<string, unknown> | null>(null);
 
   const checkAppState = async (): Promise<void> => {
+    if (!AUTH_ENABLED) {
+      setUser({ id: 'guest', role: 'guest' });
+      setIsAuthenticated(true);
+      setAuthError(null);
+      setIsLoadingAuth(false);
+      return;
+    }
+
     setIsLoadingAuth(true);
     setAuthError(null);
 
@@ -50,12 +71,25 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const logout = async (shouldRedirect = true): Promise<void> => {
+    if (!AUTH_ENABLED) {
+      setUser(null);
+      setIsAuthenticated(false);
+      return;
+    }
+
     setUser(null);
     setIsAuthenticated(false);
     await appClient.auth.logout(shouldRedirect ? window.location.href : undefined);
   };
 
   const navigateToLogin = (): void => {
+    if (!AUTH_ENABLED) {
+      return;
+    }
+    if (!LOGIN_URL || LOGIN_URL === '/login') {
+      console.warn('Auth is enabled but VITE_APP_LOGIN_URL is not configured to a valid login route.');
+      return;
+    }
     appClient.auth.redirectToLogin(window.location.href);
   };
 

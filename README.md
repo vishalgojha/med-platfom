@@ -71,6 +71,11 @@ cp deploy/env/gluco-vital.env.example deploy/env/gluco-vital.env
 docker compose up -d --build
 ```
 
+For initial local/hospital pilot without full SSO:
+
+- keep `VITE_REQUIRE_AUTH=false` in frontend env files
+- keep `VITE_ENABLE_VISUAL_EDIT_AGENT=false`
+
 Frontend ports:
 
 - `4101` -> Medisuite

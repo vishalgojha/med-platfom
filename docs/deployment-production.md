@@ -34,6 +34,11 @@ Copy-Item deploy/env/gluco-vital.env.example deploy/env/gluco-vital.env
 
 Edit each `.env` file before first deployment.
 
+For self-hosted pilots without full identity setup:
+
+- keep `VITE_REQUIRE_AUTH=false` in each frontend env file
+- keep `VITE_ENABLE_VISUAL_EDIT_AGENT=false` to disable editor scaffolding
+
 ## 2) Launch the stack
 
 ```bash
@@ -88,6 +93,7 @@ docker compose down -v
 ## 5) Hospital and clinic hardening checklist
 
 - Set strong `API_TOKEN`/`API_TOKEN_*` in `deploy/env/doctor-agent.env`.
+- Set `VITE_REQUIRE_AUTH=true` only after login/identity endpoints are fully configured.
 - Keep `DRY_RUN=true` until live messaging approvals are complete.
 - Configure `TWILIO_*` and set `DRY_RUN=false` only after validation.
 - Put TLS termination in front of ports `4101-4104` (load balancer or ingress).

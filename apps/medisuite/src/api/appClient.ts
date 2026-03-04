@@ -2,6 +2,20 @@ import { supabase } from './supabaseClient';
 
 type Json = Record<string, any>;
 
+const AUTH_REQUIRED = String(import.meta.env.VITE_REQUIRE_AUTH ?? 'false').trim().toLowerCase() === 'true';
+const SUPABASE_URL = ((import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '').trim();
+const SUPABASE_ANON_KEY = ((import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '').trim();
+const LOGIN_URL = ((import.meta.env.VITE_APP_LOGIN_URL as string | undefined) ?? '').trim();
+
+const hasPlaceholderSupabaseConfig =
+  SUPABASE_URL.length === 0 ||
+  SUPABASE_URL.includes('example.supabase.co') ||
+  SUPABASE_ANON_KEY.length === 0 ||
+  SUPABASE_ANON_KEY === 'public-anon-key';
+
+const AUTH_ENABLED = AUTH_REQUIRED && !hasPlaceholderSupabaseConfig;
+const GUEST_USER = { id: 'guest', email: 'guest@local', role: 'guest' };
+
 const toSnakeCase = (value: string): string => value.replace(/([A-Z])/g, '_$1').toLowerCase();
 
 const parseSort = (sort?: string | null): { field: string; ascending: boolean } | null => {
@@ -161,6 +175,9 @@ const invokeSupabaseFunction = async (name: string, payload: Json = {}): Promise
 
 const appAuth = {
   me: async (): Promise<any> => {
+    if (!AUTH_ENABLED) {
+      return GUEST_USER;
+    }
     const { data, error } = await supabase.auth.getUser();
     if (error || !data.user) {
       throw error ?? new Error('Unauthenticated');
@@ -169,11 +186,17 @@ const appAuth = {
   },
 
   isAuthenticated: async (): Promise<boolean> => {
+    if (!AUTH_ENABLED) {
+      return true;
+    }
     const { data } = await supabase.auth.getUser();
     return Boolean(data.user);
   },
 
   updateMe: async (payload: Json): Promise<any> => {
+    if (!AUTH_ENABLED) {
+      return { ...GUEST_USER, ...payload };
+    }
     const { data, error } = await supabase.auth.updateUser({ data: payload });
     if (error) {
       throw error;
@@ -182,6 +205,9 @@ const appAuth = {
   },
 
   logout: async (redirectTo?: string): Promise<void> => {
+    if (!AUTH_ENABLED) {
+      return;
+    }
     await supabase.auth.signOut();
     if (redirectTo && typeof window !== 'undefined') {
       window.location.href = redirectTo;
@@ -189,14 +215,20 @@ const appAuth = {
   },
 
   redirectToLogin: (redirectTo?: string): void => {
+    if (!AUTH_ENABLED) {
+      return;
+    }
     if (typeof window === 'undefined') {
       return;
     }
     if (redirectTo) {
       window.sessionStorage.setItem('post_login_redirect', redirectTo);
     }
-    const target = (import.meta.env.VITE_APP_LOGIN_URL as string | undefined) ?? '/login';
-    window.location.href = target;
+    if (!LOGIN_URL || LOGIN_URL === '/login') {
+      console.warn('Auth is enabled but VITE_APP_LOGIN_URL is not configured to a valid login route.');
+      return;
+    }
+    window.location.href = LOGIN_URL;
   },
 };
 
