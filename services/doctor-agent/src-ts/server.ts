@@ -58,6 +58,7 @@ import {
   parseWorkflow,
 } from "./orchestration/router.js";
 import { registerWhatsAppRoutes } from "./whatsapp/routes.js";
+import { registerChatRoutes } from "./chat/routes.js";
 
 function sendJson(res: Response, status: number, payload: unknown): void {
   res.status(status).json(payload);
@@ -332,6 +333,12 @@ export function createServer(deps: RuntimeDeps = createRuntimeDeps()) {
     app,
     requireScope,
     sendJson
+  });
+  registerChatRoutes({
+    app,
+    requireScope,
+    sendJson,
+    deps
   });
 
   app.get("/health", (_req, res) => {

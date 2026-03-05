@@ -154,6 +154,60 @@ CREATE TABLE IF NOT EXISTS wa_message_events (
   UNIQUE (tenant_id, direction, provider_message_id)
 );
 
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  user_id TEXT,
+  user_phone TEXT,
+  user_name TEXT,
+  language TEXT NOT NULL DEFAULT 'en',
+  workflow TEXT NOT NULL DEFAULT 'triage_intake',
+  specialty_id TEXT NOT NULL DEFAULT 'family_medicine',
+  doctor_id TEXT NOT NULL REFERENCES doctors(id),
+  patient_id TEXT REFERENCES patients(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  message_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_events (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+  event_type TEXT NOT NULL,
+  event_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chat_idempotency_keys (
+  idempotency_key TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  session_id TEXT REFERENCES chat_sessions(id),
+  request_hash TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (idempotency_key, channel, tenant_id)
+);
+
+CREATE TABLE IF NOT EXISTS skill_runs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT REFERENCES chat_sessions(id),
+  skill_name TEXT NOT NULL,
+  request_json TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  ok INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_notes_patient_created ON notes(patient_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_prior_auths_patient_status ON prior_auths(patient_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_follow_ups_status_schedule ON follow_ups(status, scheduled_at);
@@ -166,3 +220,8 @@ CREATE INDEX IF NOT EXISTS idx_replay_executed ON replay_log(executed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_tenants_status ON wa_tenants(status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_conversations_tenant_updated ON wa_conversations(tenant_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_wa_message_events_tenant_created ON wa_message_events(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_tenant_updated ON chat_sessions(tenant_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created ON chat_messages(session_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_chat_events_session_created ON chat_events(session_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_chat_idempotency_created ON chat_idempotency_keys(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_skill_runs_created ON skill_runs(created_at DESC);

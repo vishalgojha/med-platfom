@@ -185,6 +185,65 @@ export function runMigrations(): void {
       UNIQUE (tenant_id, direction, provider_message_id)
     )`
   );
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS chat_sessions (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      user_id TEXT,
+      user_phone TEXT,
+      user_name TEXT,
+      language TEXT NOT NULL DEFAULT 'en',
+      workflow TEXT NOT NULL DEFAULT 'triage_intake',
+      specialty_id TEXT NOT NULL DEFAULT 'family_medicine',
+      doctor_id TEXT NOT NULL REFERENCES doctors(id),
+      patient_id TEXT REFERENCES patients(id),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`
+  );
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS chat_messages (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+      role TEXT NOT NULL,
+      text TEXT NOT NULL,
+      message_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  );
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS chat_events (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES chat_sessions(id),
+      event_type TEXT NOT NULL,
+      event_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  );
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS chat_idempotency_keys (
+      idempotency_key TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      tenant_id TEXT NOT NULL,
+      session_id TEXT REFERENCES chat_sessions(id),
+      request_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (idempotency_key, channel, tenant_id)
+    )`
+  );
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS skill_runs (
+      id TEXT PRIMARY KEY,
+      session_id TEXT REFERENCES chat_sessions(id),
+      skill_name TEXT NOT NULL,
+      request_json TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      ok INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    )`
+  );
 
   const waTenantColumns = db
     .prepare("PRAGMA table_info(wa_tenants)")

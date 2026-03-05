@@ -1,17 +1,11 @@
 import type { SupportedLanguage } from "@med-platform/clinical-specialties";
 import { AnthropicClient, StubAIClient, type AIClient } from "../ai/client.js";
+import { runChatWorkflowTurn } from "../chat/orchestrator.js";
 import { getConfig } from "../config.js";
 import { addDoctor, getDoctorById } from "../doctors/store.js";
-import type { ExecuteOptions } from "../engine/executor.js";
 import { logger } from "../logger.js";
 import { addPatient } from "../patients/store.js";
-import {
-  executeAgentWorkflow,
-  normalizeSpecialtyId,
-  parseWorkflow,
-  type OrchestrationWorkflow
-} from "../orchestration/router.js";
-import { createCapabilityHandlers } from "../runtime.js";
+import { normalizeSpecialtyId } from "../orchestration/router.js";
 import { StubMessagingAdapter } from "../messaging/stub.js";
 import { makeId } from "../utils.js";
 import { decryptSecret } from "./crypto.js";
@@ -84,12 +78,6 @@ const AGENT_SPECIALTY_ALIAS: Record<string, string> = {
   child_assistant: "pediatrics",
   women_health_assistant: "obstetrics_gynecology"
 };
-
-function hasStructuredError(value: unknown): value is { ok: false; message: string } {
-  if (!value || typeof value !== "object") return false;
-  const obj = value as { ok?: unknown; message?: unknown };
-  return obj.ok === false && typeof obj.message === "string";
-}
 
 function detectLanguage(body: string, fallback: SupportedLanguage): SupportedLanguage {
   if (/[\u0900-\u097F]/.test(body)) {
@@ -222,87 +210,11 @@ function ensureConversationContext(input: {
   };
 }
 
-function formatWorkflowOutput(output: unknown, language: SupportedLanguage): string {
-  const englishHeader = "Here is the initial clinical guidance:";
-  const hindiHeader = "यह प्रारंभिक क्लिनिकल मार्गदर्शन है:";
-
-  if (Array.isArray(output)) {
-    const messages = output
-      .map((entry) => (entry && typeof entry === "object" ? (entry as { message?: unknown }).message : null))
-      .filter((message): message is string => typeof message === "string" && message.trim().length > 0)
-      .slice(0, 4);
-    if (messages.length > 0) {
-      const lines = messages.map((message, index) => `${index + 1}. ${message.trim()}`);
-      const footer =
-        language === "hi"
-          ? "आपात स्थिति में तुरंत नज़दीकी अस्पताल जाएं।"
-          : "If this is urgent, please go to the nearest emergency department.";
-      return sanitizeReply(`${language === "hi" ? hindiHeader : englishHeader}\n${lines.join("\n")}\n${footer}`);
-    }
-  }
-
-  if (output && typeof output === "object") {
-    const record = output as Record<string, unknown>;
-    if (typeof record.plan === "string" && record.plan.trim()) {
-      const intro = language === "hi" ? "अगला कदम:" : "Next step:";
-      return sanitizeReply(`${intro} ${record.plan.trim()}`);
-    }
-  }
-
-  if (typeof output === "string" && output.trim()) {
-    return sanitizeReply(output);
-  }
-
-  return language === "hi"
-    ? "आपका संदेश प्राप्त हुआ। कृपया लक्षण और अवधि बताएं ताकि बेहतर सहायता दी जा सके।"
-    : "Message received. Please share symptoms and duration so I can assist better.";
-}
-
-function buildWorkflowPayload(workflow: OrchestrationWorkflow, messageBody: string, language: SupportedLanguage): Record<string, unknown> {
-  const languageInstruction =
-    language === "hi"
-      ? "Respond in Hindi for the patient-facing content."
-      : "Respond in English for the patient-facing content.";
-
-  if (workflow === "consultation_documentation") {
-    return {
-      transcript: messageBody,
-      query: languageInstruction
-    };
-  }
-  if (workflow === "follow_up_outreach") {
-    return {
-      trigger: "custom",
-      customMessage: messageBody,
-      channel: "whatsapp",
-      sendNow: false
-    };
-  }
-  if (workflow === "prior_authorization") {
-    return {
-      procedureCode: "UNSPECIFIED",
-      diagnosisCodes: ["UNSPECIFIED"],
-      insurerId: "UNSPECIFIED",
-      submit: false
-    };
-  }
-  return {
-    query: `${messageBody}\n\n${languageInstruction}`
-  };
-}
-
 function formatConnectReply(specialtyId: string, language: SupportedLanguage): string {
   if (language === "hi") {
     return `कनेक्शन सफल। अब आपको ${specialtyId.replace(/_/g, " ")} एजेंट से सहायता मिलेगी।`;
   }
   return `Connected successfully. You are now routed to ${specialtyId.replace(/_/g, " ")} support.`;
-}
-
-function formatErrorReply(language: SupportedLanguage): string {
-  if (language === "hi") {
-    return "अभी सहायक उपलब्ध नहीं है। कृपया कुछ देर बाद दोबारा प्रयास करें या क्लिनिक से संपर्क करें।";
-  }
-  return "Assistant is temporarily unavailable. Please try again shortly or contact your clinic.";
 }
 
 export async function processInboundWhatsAppMessage(
@@ -413,7 +325,6 @@ export async function processInboundWhatsAppMessage(
     };
   }
 
-  const workflow = parseWorkflow(tenant.defaultWorkflow) ?? "triage_intake";
   const aiModel = tenant.aiModel || getConfig().aiModel;
   const aiClient = createTenantAIClient(decryptSecret(tenant.anthropicApiKey), aiModel);
   const messaging =
@@ -427,42 +338,34 @@ export async function processInboundWhatsAppMessage(
           fromNumber: tenant.twilioFromNumber
         })
       : new StubMessagingAdapter();
-  const handlers = createCapabilityHandlers({
-    aiClient,
-    messaging
-  });
-  const options: ExecuteOptions = {
-    confirm: true,
-    requestId: `wa-${inboundSid}`,
-    actorId: `whatsapp:${from}`
-  };
+  const workflow = tenant.defaultWorkflow;
+  const requestId = `wa-${inboundSid}`;
+  const actorId = `whatsapp:${from}`;
 
   let replyBody = "";
   try {
-    const workflowOutput = await executeAgentWorkflow(
-      {
-        workflow,
-        specialtyId: context.conversation.specialtyId || tenant.defaultSpecialtyId,
-        doctorId: context.doctorId,
-        patientId: context.patientId,
-        payload: buildWorkflowPayload(workflow, body, language),
-        dryRun: getConfig().dryRun
-      },
-      handlers,
-      options
-    );
+    const turn = await runChatWorkflowTurn({
+      runtime: { aiClient, messaging },
+      workflow,
+      specialtyId: context.conversation.specialtyId || tenant.defaultSpecialtyId,
+      doctorId: context.doctorId,
+      patientId: context.patientId,
+      messageText: body,
+      language,
+      dryRun: getConfig().dryRun,
+      requestId,
+      actorId,
+      confirm: true
+    });
 
-    if (hasStructuredError(workflowOutput)) {
-      replyBody = formatErrorReply(language);
+    replyBody = turn.assistantText;
+    if (!turn.ok) {
       logger.warn("whatsapp.workflow.failed", {
         tenantId: tenant.id,
         workflow,
-        message: workflowOutput.message
+        message: turn.error.message
       });
-      workers.noteError(tenant.id, workflowOutput.message);
-    } else {
-      const stepOutput = workflowOutput.steps[workflowOutput.steps.length - 1]?.output;
-      replyBody = formatWorkflowOutput(stepOutput, language);
+      workers.noteError(tenant.id, turn.error.message);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -472,7 +375,9 @@ export async function processInboundWhatsAppMessage(
       workflow,
       message
     });
-    replyBody = formatErrorReply(language);
+    replyBody = language === "hi"
+      ? "अभी सहायक उपलब्ध नहीं है। कृपया कुछ देर बाद दोबारा प्रयास करें या क्लिनिक से संपर्क करें।"
+      : "Assistant is temporarily unavailable. Please try again shortly or contact your clinic.";
   }
 
   const outbound = await replySender({

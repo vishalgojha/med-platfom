@@ -115,6 +115,11 @@ Endpoints:
 - `GET /api/specialties`
 - `GET /api/agents/deployment-profile`
 - `POST /api/agent-router/execute`
+- `POST /api/v1/chat/inbound`
+- `GET /api/v1/chat/sessions/:id/messages`
+- `GET /api/v1/chat/sessions/:id/events`
+- `GET /api/v1/skills`
+- `POST /api/v1/skills/execute`
 - `GET /api/patients`
 - `POST /api/patients`
 - `GET /api/patients/:id`
@@ -179,6 +184,16 @@ Example payloads:
   }
 }
 ```
+```json
+{
+  "channel": "webchat",
+  "tenantId": "clinic_one",
+  "user": { "id": "u_123", "name": "Rhea", "language": "en" },
+  "message": { "id": "m_123", "text": "Patient has fever for two days" },
+  "routing": { "workflow": "triage_intake", "specialtyId": "family_medicine" },
+  "options": { "stream": true, "dryRun": false, "confirm": true }
+}
+```
 If `API_TOKEN` is configured, include:
 ```http
 Authorization: Bearer <API_TOKEN>
@@ -187,6 +202,16 @@ Optional trace headers:
 ```http
 x-request-id: your-request-id
 x-actor-id: doctor-or-service-id
+```
+For non-webchat channels (`whatsapp_twilio`, `whatsapp_web`) include:
+```http
+x-idempotency-key: your-deduplication-key
+```
+
+Browser stream endpoint:
+```http
+GET /api/v1/chat/sessions/:id/events
+Accept: text/event-stream
 ```
 
 Twilio status callback:
